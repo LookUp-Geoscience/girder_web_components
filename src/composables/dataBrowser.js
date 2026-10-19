@@ -1,13 +1,5 @@
 import { computed, inject, isRef, ref, toRef, watch } from 'vue';
-import {
-  formatSize,
-  getLocationType,
-  getResourceIcon,
-  getSingularLocationTypeName,
-} from '@/utils';
-
-const GIRDER_FOLDER_ENDPOINT = 'folder';
-const GIRDER_ITEM_ENDPOINT = 'item';
+import createRestDataSource from '@/utils/restDataSource';
 
 function emptyCounts() {
   return {
@@ -30,8 +22,13 @@ function emptyCounts() {
  *   such as `{ type: 'root' }`, `{ type: 'collections' }` or `{ type: 'users' }`.
  * @param {import('vue').Ref<{ page: number, itemsPerPage: number }>} [params.options]
  *   Pagination options. `itemsPerPage: -1` means all rows. A ref is created when omitted.
+ * @param {{ count: Function, list: Function }} [params.source]
+ *   Where rows are read from. Defaults to the Girder REST API through `rest`
+ *   (see `createRestDataSource`). A custom source can read them from another
+ *   backend, for instance a server that queries Girder on behalf of the page.
  * @param {import('@/utils/restClient').default} [params.rest]
- *   Girder REST client. Defaults to the client provided by the plugin.
+ *   Girder REST client used by the default source. Defaults to the client
+ *   provided by the plugin.
  * @param {import('vue').Ref<Object|null>} [params.user]
  *   Current user. Defaults to the user provided by the plugin. Data is
  *   refetched when it changes.
@@ -39,13 +36,18 @@ function emptyCounts() {
 export default function useDataBrowser({
   location,
   options,
+  source,
   rest,
   user,
 } = {}) {
-  const injected = rest && user ? null : inject('girder', null);
+  const needsInjection = !user || (!source && !rest);
+  const injected = needsInjection ? inject('girder', null) : null;
   const client = rest || injected?.rest;
-  if (!client) {
-    throw new Error('useDataBrowser: no Girder REST client was provided or injected');
+  const dataSource = source || (client && createRestDataSource(client));
+  if (!dataSource) {
+    throw new Error(
+      'useDataBrowser: no data source or Girder REST client was provided or injected',
+    );
   }
   const currentUser = user || injected?.user || ref(null);
 
@@ -68,140 +70,11 @@ export default function useDataBrowser({
   );
 
   // ---- Fetching ----
-  async function fetchPaginatedFolderRows() {
-    const { nFolders, nItems } = counts.value;
-    const { page, itemsPerPage } = optionsRef.value;
-    const currentLocation = locationRef.value;
-
-    let folderNotPublic = false;
-    if (!currentLocation.created && currentLocation._modelType === 'folder') {
-      folderNotPublic = !(await client.get(`folder/${currentLocation._id}`)).data
-        .public;
-    }
-
-    const promises = [];
-
-    const folderOffset = itemsPerPage === -1 ? 0 : (page - 1) * itemsPerPage;
-
-    const foldersLeft = Math.max(nFolders - folderOffset, 0);
-    if (foldersLeft > 0) {
-      promises.push(
-        client.get(GIRDER_FOLDER_ENDPOINT, {
-          params: {
-            parentType: currentLocation._modelType,
-            parentId: currentLocation._id,
-            limit: itemsPerPage === -1 ? 0 : itemsPerPage,
-            offset: folderOffset,
-          },
-        }),
-      );
-    }
-
-    const itemOffset = Math.max(folderOffset - nFolders, 0);
-    const itemsLeft = Math.max(nItems - itemOffset, 0);
-
-    if (itemsLeft > 0 && (itemsPerPage === -1 || itemsPerPage - foldersLeft > 0)) {
-      promises.push(
-        client.get(GIRDER_ITEM_ENDPOINT, {
-          params: {
-            folderId: currentLocation._id,
-            limit: itemsPerPage === -1 ? 0 : itemsPerPage - foldersLeft,
-            offset: itemOffset,
-          },
-        }),
-      );
-    }
-
-    return (await Promise.all(promises))
-      .flatMap((r) => r.data)
-      .map((item) => ({
-        ...item,
-        humanSize: item.size ? formatSize(item.size) : '',
-        icon: getResourceIcon(item),
-        notPublic: item._modelType === 'folder' ? !item.public : folderNotPublic,
-      }));
-  }
-
-  async function fetchPaginatedCollectionOrUserRows(type) {
-    const { page, itemsPerPage } = optionsRef.value;
-    const { data } = await client.get(type, {
-      params: {
-        limit: itemsPerPage >= 0 ? itemsPerPage : null,
-        offset: (page - 1) * itemsPerPage,
-      },
-    });
-
-    return data.map((item) => ({
-      ...item,
-      name:
-        item._modelType === 'user'
-          ? `${item.firstName} ${item.lastName}`
-          : item.name,
-      humanSize: item.size ? formatSize(item.size) : '',
-      icon: getResourceIcon(item),
-    }));
-  }
-
-  function generateRootRows() {
-    const rootRows = [{ type: 'collections', name: 'Collections', icon: '$collection' }];
-    if (client.user) {
-      rootRows.push({ type: 'users', name: 'Users', icon: '$user' });
-    }
-    return rootRows;
-  }
-
-  async function fetchPaginatedRows() {
-    if (counts.value.nFolders || counts.value.nItems) {
-      return fetchPaginatedFolderRows();
-    }
-
-    const type = getLocationType(locationRef.value);
-    if (['users', 'collections'].includes(type)) {
-      return fetchPaginatedCollectionOrUserRows(
-        getSingularLocationTypeName(locationRef.value),
-      );
-    }
-
-    if (type === 'root') {
-      return generateRootRows();
-    }
-
-    return [];
-  }
-
   async function fetchCounts() {
-    const base = emptyCounts();
-    const type = getLocationType(locationRef.value);
-    const { _id } = locationRef.value;
-
     try {
-      if (['folder', 'user', 'collection'].includes(type)) {
-        const { data } = await client.get(`${type}/${_id}/details`);
-        counts.value = {
-          ...base,
-          nFolders: data.nFolders || 0,
-          nItems: data.nItems || 0,
-        };
-        return;
-      }
-
-      if (type === 'users' || type === 'collections') {
-        const { data } = await client.get(
-          `${getSingularLocationTypeName(locationRef.value)}/details`,
-        );
-        const key = Object.keys(data)[0];
-        counts.value = { ...base, [key]: Object.values(data)[0] };
-        return;
-      }
-
-      if (type === 'root') {
-        counts.value = { ...base, nUsers: 1, nCollections: 1 };
-        return;
-      }
-
-      counts.value = base;
+      counts.value = await dataSource.count(locationRef.value);
     } catch (_err) {
-      counts.value = base;
+      counts.value = emptyCounts();
     }
   }
 
@@ -212,7 +85,12 @@ export default function useDataBrowser({
     loading.value = true;
     error.value = null;
     try {
-      const result = await fetchPaginatedRows();
+      const { page, itemsPerPage } = optionsRef.value;
+      const result = await dataSource.list(locationRef.value, {
+        page,
+        itemsPerPage,
+        counts: counts.value,
+      });
       if (request === lastRequest) {
         rows.value = result;
       }

@@ -230,9 +230,25 @@ export interface DataBrowserRow extends Partial<GirderModel> {
   notPublic?: boolean
 }
 
+export interface GirderDataSource<
+  TCounts extends object = Record<string, number>,
+  TRow = DataBrowserRow,
+> {
+  /** Counts for a location. The total number of rows is the sum of the values. */
+  count(location: Location): Promise<TCounts>
+  /** Rows of one page. `counts` is the last result of `count()`. */
+  list(
+    location: Location,
+    params: { page: number, itemsPerPage: number, counts: TCounts },
+  ): Promise<TRow[]>
+}
+
+export function createRestDataSource(rest: RestClient): GirderDataSource<DataBrowserCounts>
+
 export interface UseDataBrowserParams {
   location: MaybeRefOrGetter<Location>
   options?: Ref<DataBrowserOptions> | DataBrowserOptions
+  source?: GirderDataSource<any, any>
   rest?: RestClient
   user?: Ref<GirderModel | null>
 }
@@ -241,7 +257,7 @@ export interface UseDataBrowserReturn {
   rows: Ref<DataBrowserRow[]>
   loading: Ref<boolean>
   error: Ref<unknown>
-  counts: Ref<DataBrowserCounts>
+  counts: Ref<Record<string, number>>
   serverItemsLength: ComputedRef<number>
   options: Ref<DataBrowserOptions>
   refresh(): void

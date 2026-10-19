@@ -157,6 +157,36 @@ function open(row) {
 </template>
 ```
 
+#### Custom data source
+
+`useDataBrowser` and `GirderDataBrowser` read rows through a data source. The
+default one, `createRestDataSource(rest)`, calls the Girder REST API from the
+browser. Another source can be passed, for instance to list the hierarchy
+through a backend that queries Girder on behalf of the page:
+
+```javascript
+const source = {
+  // Counts for a location: the total number of rows is the sum of the values.
+  async count(location) {
+    const response = await fetch(`/my-backend/count?id=${location._id}`);
+    return response.json(); // e.g. { nFolders: 3, nItems: 12 }
+  },
+  // Rows of one page; counts is the last result of count().
+  async list(location, { page, itemsPerPage, counts }) {
+    const response = await fetch(
+      `/my-backend/list?id=${location._id}&page=${page}&limit=${itemsPerPage}`,
+    );
+    return response.json();
+  },
+};
+
+const { rows } = useDataBrowser({ location, source });
+```
+
+```html
+<GirderDataBrowser :location="location" :data-source="source" />
+```
+
 ### Other installation methods
 
 It's not necessary to install Girder web components yourself, you can import the pre-built bundle.

@@ -31,6 +31,9 @@ export default {
       })
     },
     itemsPerPageOptions: { type: Array, default: () => [10, 25, 50] },
+    // Object with count() and list() methods, see createRestDataSource.
+    // Read once when the component is created.
+    dataSource: { type: Object, default: null },
   },
 
   emits: [
@@ -71,6 +74,7 @@ export default {
     } = useDataBrowser({
       location: () => props.location,
       options: internalOptions,
+      source: props.dataSource || undefined,
     });
 
     // ---- Computed ----
