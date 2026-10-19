@@ -111,6 +111,52 @@ app.mount('#app')
 
 > **Note:** You must use the mdi icon pack. Icon packs cannot be mixed.
 
+### Headless composables
+
+The logic of the browsing, login and selection components is also available as
+composables, without any rendering. They can be used to build a custom UI on top
+of Girder web components, with or without Vuetify.
+
+- `useDataBrowser({ location, options })`: rows of a location, counts,
+  pagination (`options.page`, `options.itemsPerPage`), `loading`, `error` and `refresh()`.
+- `useGirderLogin()`: `username`, `password`, `otp`, `otpRequired`, `alerts`,
+  `inProgress`, `login()`, `logout()` and `sendVerification()`. `login()` resolves
+  to `'success'`, `'otp'` (a one-time password is required) or `'error'`.
+- `useSelection(selected, { multiple, selectableTypes })`: `selected`,
+  `selectedIds`, `isSelected()`, `toggle()`, `toggleAll()`, `clear()`. The selection
+  array is never mutated in place, so `selected` can be a writable computed that
+  emits `update:selected`.
+
+By default, the composables use the REST client provided by the plugin. A
+`RestClient` can also be passed with the `rest` parameter.
+
+```html
+<script setup>
+import { ref } from 'vue';
+import { useDataBrowser, useSelection } from '@girder/components';
+
+const location = ref({ type: 'root' });
+const { rows, loading, options } = useDataBrowser({ location });
+const { selected, toggle, isSelected } = useSelection([], { selectableTypes: ['item'] });
+
+function open(row) {
+  if (row._modelType === 'item') {
+    toggle(row);
+  } else {
+    location.value = row;
+  }
+}
+</script>
+
+<template>
+  <ul :aria-busy="loading">
+    <li v-for="row in rows" :key="row._id || row.type" @click="open(row)">
+      {{ isSelected(row) ? '[x]' : '[ ]' }} {{ row.name }}
+    </li>
+  </ul>
+</template>
+```
+
 ### Other installation methods
 
 It's not necessary to install Girder web components yourself, you can import the pre-built bundle.
